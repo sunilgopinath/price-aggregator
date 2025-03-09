@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Alerts</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        #alerts { 
+            margin-top: 20px; 
+            padding: 10px; 
+            border: 1px solid #ccc; 
+            min-height: 100px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .alert { 
+            padding: 10px; 
+            margin: 5px 0; 
+            border-left: 5px solid red; 
+            background-color: #fff8f8; 
+        }
+        .connection-status { 
+            padding: 5px 10px; 
+            font-size: 12px; 
+            border-radius: 4px; 
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        .connected { 
+            background-color: #dfffdf; 
+            color: #006400; 
+        }
+        .disconnected { 
+            background-color: #ffebeb; 
+            color: #8b0000; 
+        }
+        .connecting { 
+            background-color: #ffffdf; 
+            color: #8b8b00; 
+        }
+        .timestamp {
+            font-size: 12px; 
+            color: #888;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Price Alerts</h1>
+    <div id="status" class="connection-status connecting">Connecting to server...</div>
+    <div id="alerts"></div>
+
+    <script>
+        let eventSource;
+        let reconnectAttempts = 0;
+        const maxReconnectDelay = 30000; // 30 seconds max
+        const baseReconnectDelay = 1000; // 1 second
+        
+        const alertsDiv = document.getElementById("alerts");
+        const statusDiv = document.getElementById("status");
+        
+        function connectEventSource() {
+            updateStatus("connecting", "Connecting to server...");
+            
+            // Close existing connection if any
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource("/alerts/stream");
+            
+            eventSource.onopen = function() {
+                reconnectAttempts = 0;
+                updateStatus("connected", "Connected to server");
+                console.log("SSE connection established");
+            };
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    // If it's just a heartbeat (only timestamp), don't display it
+                    if (Object.keys(data).length === 1 && data.timestamp) {
+                        console.log("Heartbeat received at", data.timestamp);
+                        return;
+                    }
+                    
+                    const alertTime = new Date(data.timestamp).toLocaleString();
+                    const alertMessage = `<div class="alert">
+                        <div><strong>🚨 ${data.symbol}</strong> crossed ${data.threshold.toLocaleString()} (${data.triggered.toUpperCase()})</div>
+                        <div class="timestamp">${alertTime}</div>
+                    </div>`;
+                    
+                    alertsDiv.innerHTML = alertMessage + alertsDiv.innerHTML;
+                } catch (e) {
+                    console.error("Error parsing event data:", e, event.data);
+                }
+            };
+            
+            eventSource.onerror = function(e) {
+                eventSource.close();
+                
+                // Calculate reconnection delay with exponential backoff
+                reconnectAttempts++;
+                const delay = Math.min(
+                    maxReconnectDelay, 
+                    baseReconnectDelay * Math.pow(1.5, reconnectAttempts - 1)
+                );
+                
+                updateStatus(
+                    "disconnected", 
+                    `Disconnected - retrying in ${Math.round(delay/1000)}s...`
+                );
+                
+                // Try to reconnect after a delay
+                setTimeout(connectEventSource, delay);
+            };
+        }
+        
+        function updateStatus(state, message) {
+            statusDiv.className = `connection-status ${state}`;
+            statusDiv.textContent = message;
+        }
+        
+        // Initial connection
+        connectEventSource();
+        
+        // Handle page visibility changes
+        document.addEventListener("visibilitychange", function() {
+            if (document.visibilityState === "visible") {
+                // Reconnect if the page becomes visible again
+                if (!eventSource || eventSource.readyState === EventSource.CLOSED) {
+                    console.log("Page became visible, reconnecting...");
+                    connectEventSource();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
